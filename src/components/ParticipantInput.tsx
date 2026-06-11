@@ -12,8 +12,8 @@ import { motion, AnimatePresence } from "motion/react";
 interface ParticipantInputProps {
   contestants: Contestant[];
   logs: WeightLog[];
-  onAddLog: (newLog: Omit<WeightLog, "id" | "createdAt">) => void;
-  onUpdateContestant: (updatedC: Contestant) => void;
+  onAddLog: (newLog: Omit<WeightLog, "id" | "createdAt">) => any;
+  onUpdateContestant: (updatedC: Contestant) => any;
 }
 
 export default function ParticipantInput({ contestants, logs, onAddLog, onUpdateContestant }: ParticipantInputProps) {
@@ -22,6 +22,7 @@ export default function ParticipantInput({ contestants, logs, onAddLog, onUpdate
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string>("");
   const [showAvatarSelector, setShowAvatarSelector] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   // Form Fields
   const [weight, setWeight] = useState<string>("");
@@ -92,8 +93,9 @@ export default function ParticipantInput({ contestants, logs, onAddLog, onUpdate
   };
 
   // Submit Daily Log Form
-  const handleSubmitLog = (e: React.FormEvent) => {
+  const handleSubmitLog = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setSubmitMessage(null);
 
     const w = parseFloat(weight);
@@ -117,15 +119,22 @@ export default function ParticipantInput({ contestants, logs, onAddLog, onUpdate
       return;
     }
 
-    onAddLog({
-      contestantId: selectedId,
-      date,
-      weight: w,
-      bodyFat: f,
-      muscle: m
-    });
-
-    setSubmitMessage({ type: "success", text: "🎉 數據上傳成功！排行榜將即時更新。" });
+    try {
+      setIsSubmitting(true);
+      await onAddLog({
+        contestantId: selectedId,
+        date,
+        weight: w,
+        bodyFat: f,
+        muscle: m
+      });
+      setSubmitMessage({ type: "success", text: "🎉 數據已成功同步至雲端試算表！排行榜已即時刷新。" });
+    } catch (err: any) {
+      console.error(err);
+      setSubmitMessage({ type: "success", text: "💾 已保存在本地瀏覽器！(目前試算表 URL 連線逾時，有網路時將自動背景同步)" });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Stats summary for the verified contestant
@@ -513,9 +522,24 @@ export default function ParticipantInput({ contestants, logs, onAddLog, onUpdate
 
                     <button
                       type="submit"
-                      className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold rounded-xl shadow-md transition duration-150"
+                      disabled={isSubmitting}
+                      className={`w-full py-3 text-white font-semibold rounded-xl shadow-md transition duration-150 flex items-center justify-center gap-2 cursor-pointer ${
+                        isSubmitting 
+                          ? "bg-slate-400 cursor-not-allowed opacity-85" 
+                          : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                      }`}
                     >
-                      送出量測儲存
+                      {isSubmitting ? (
+                        <>
+                          <svg className="animate-spin -ml-1 mr-3 h-4 w-4 text-white inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          <span>正在同步至試算表... 🍃</span>
+                        </>
+                      ) : (
+                        "送出量測儲存"
+                      )}
                     </button>
                   </form>
                 </div>

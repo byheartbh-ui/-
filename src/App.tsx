@@ -12,6 +12,14 @@ import AdminPanel from "./components/AdminPanel";
 import { Trophy, Scale, Settings, Flame, RefreshCw, Sparkles, CheckCircle, AlertCircle, Leaf, HelpCircle } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
+// =========================================================================
+// 🌐 全域預設 Google 試算表 Web App 同步網址 (如果你想讓每個人進來都自動讀取同一個試算表)
+// 1. 你可以直接在下方引號中貼上您的 Google Apps Script 取得的「網頁應用程式 Web App」網址。
+// 2. 或者，如果你是用 Netlify，也可以直接在 Netlify 的環境變數 (Environment Variables) 
+//    中設定一組 VITE_SHEETS_URL = 你的網址。如此一來不需修改程式碼，每個人打開也會直接連到同一個試算表！
+// =========================================================================
+const GLOBAL_DEFAULT_SHEETS_URL = ""; 
+
 export default function App() {
   const [activeTab, setActiveTab ] = useState<"leaderboard" | "checkin" | "admin">("leaderboard");
   
@@ -33,6 +41,9 @@ export default function App() {
       const storedLogs = localStorage.getItem("weight_loss_logs");
       const storedSync = localStorage.getItem("weight_loss_sync");
 
+      // 載入全域預設之 Google 試算表連結
+      const defaultSheetsUrl = (import.meta as any).env?.VITE_SHEETS_URL || GLOBAL_DEFAULT_SHEETS_URL || "";
+
       if (storedContestants) {
         setContestants(JSON.parse(storedContestants));
       } else {
@@ -48,7 +59,22 @@ export default function App() {
       }
 
       if (storedSync) {
-        setSyncSettings(JSON.parse(storedSync));
+        const parsedSync = JSON.parse(storedSync);
+        // 如果本地設定儲存了空白網址，但程式碼裡有設定預設網址，則自動補上
+        if (!parsedSync.sheetsUrl && defaultSheetsUrl) {
+          parsedSync.sheetsUrl = defaultSheetsUrl;
+        }
+        setSyncSettings(parsedSync);
+      } else {
+        // 全新裝置/瀏覽器無本地紀錄：自動套用預設同步網址
+        const initialSync: SyncSettings = {
+          sheetsUrl: defaultSheetsUrl,
+          lastSynced: null,
+        };
+        setSyncSettings(initialSync);
+        if (defaultSheetsUrl) {
+          localStorage.setItem("weight_loss_sync", JSON.stringify(initialSync));
+        }
       }
     } catch (e) {
       console.error("Failed to load local storage state:", e);
@@ -71,35 +97,30 @@ export default function App() {
               const remoteContestants: Contestant[] = remoteData.contestants || [];
               const remoteLogs: WeightLog[] = remoteData.logs || [];
               
-              setContestants(currentLocalContestants => {
-                const mergedContestantsMap = new Map<string, Contestant>();
-                remoteContestants.forEach(c => mergedContestantsMap.set(c.id, c));
-                currentLocalContestants.forEach(c => mergedContestantsMap.set(c.id, c));
-                const unionedC = Array.from(mergedContestantsMap.values());
-                localStorage.setItem("weight_loss_contestants", JSON.stringify(unionedC));
-                return unionedC;
-              });
+              // 當與試算表同步時，雲端試算表為「單一真理來源」(Single Source of Truth)。
+              // 若雲端有參賽資料，應完全覆蓋本地狀態以防被舊有的 mock 初始設定汙染，造成手機和電腦顯示不一致。
+              if (remoteContestants && remoteContestants.length > 0) {
+                setContestants(remoteContestants);
+                localStorage.setItem("weight_loss_contestants", JSON.stringify(remoteContestants));
 
-              setLogs(currentLocalLogs => {
-                const mergedLogsMap = new Map<string, WeightLog>();
-                remoteLogs.forEach(l => mergedLogsMap.set(l.id, l));
-                currentLocalLogs.forEach(l => mergedLogsMap.set(l.id, l));
-                const unionedL = Array.from(mergedLogsMap.values());
-                unionedL.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime() ||
+                // 排序並覆寫 Weight Logs
+                const sortedLogs = [...remoteLogs];
+                sortedLogs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime() ||
                                          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-                localStorage.setItem("weight_loss_logs", JSON.stringify(unionedL));
-                return unionedL;
-              });
-              
-              console.log("🚀 啟動時自動背景同步 Google 試算表資料完成！");
+                setLogs(sortedLogs);
+                localStorage.setItem("weight_loss_logs", JSON.stringify(sortedLogs));
+                
+                console.log("🚀 啟動時自動載入 Google 試算表最新資料完成（覆蓋本地 mock 雜訊）！");
+              } else {
+                console.log("⚠️ 雲端試算表尚未初始化或為空，維持本地沙盒設定。");
+              }
             }
           }
         } catch (err) {
           console.error("Startup auto pull failed:", err);
         }
       };
-      
-      // Delay slightly to let local mount complete smoothly
+
       const timer = setTimeout(performInitialSync, 800);
       return () => clearTimeout(timer);
     }
@@ -116,28 +137,118 @@ export default function App() {
     setLogs(newList);
   };
 
+  // 1.9 Centralized Robust Pull-Merge-Push Synchronization Flow
+  // Ensures any edit is merged with the latest remote data before posting,
+  // preventing race conditions, over-writing and multi-user data-loss!
+  const pullMergePushSync = async (
+    localContestantsSnapshot: Contestant[],
+    localLogsSnapshot: WeightLog[]
+  ): Promise<{ contestants: Contestant[]; logs: WeightLog[] }> => {
+    if (!syncSettings.sheetsUrl) {
+      saveContestantsLocally(localContestantsSnapshot);
+      saveLogsLocally(localLogsSnapshot);
+      return { contestants: localContestantsSnapshot, logs: localLogsSnapshot };
+    }
+
+    try {
+      // Step A: Pull latest remote database state first to avoid overwriting others' edits
+      const getUrl = `${syncSettings.sheetsUrl}?t=${Date.now()}`;
+      const response = await fetch(getUrl, { method: "GET", mode: "cors" });
+      
+      let mergedContestants = [...localContestantsSnapshot];
+      let mergedLogs = [...localLogsSnapshot];
+
+      if (response.ok) {
+        const remoteData = await response.json();
+        if (remoteData && !remoteData.error) {
+          const remoteContestants: Contestant[] = remoteData.contestants || [];
+          const remoteLogs: WeightLog[] = remoteData.logs || [];
+
+          // Merge Contestants (Union based on ID):
+          const contestantsMap = new Map<string, Contestant>();
+          // 1. Fill with newest remote
+          remoteContestants.forEach(c => contestantsMap.set(c.id, c));
+          // 2. Overwrite/add with newly modified local contestant
+          localContestantsSnapshot.forEach(c => contestantsMap.set(c.id, c));
+          mergedContestants = Array.from(contestantsMap.values());
+
+          // Merge Logs (Union based on unique ID):
+          const logsMap = new Map<string, WeightLog>();
+          remoteLogs.forEach(l => logsMap.set(l.id, l));
+          localLogsSnapshot.forEach(l => logsMap.set(l.id, l));
+          mergedLogs = Array.from(logsMap.values());
+          mergedLogs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime() ||
+                                   new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        }
+      }
+
+      // Step B: Commit merged dataset to memory and local storage
+      saveContestantsLocally(mergedContestants);
+      saveLogsLocally(mergedLogs);
+
+      // Step C: Push the merged complete state back to Google Sheets Web App
+      await fetch(syncSettings.sheetsUrl, {
+        method: "POST",
+        mode: "cors",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          action: "save",
+          contestants: mergedContestants,
+          logs: mergedLogs,
+        }),
+      });
+
+      // Update sync timestamp
+      const now = new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei" });
+      handleSaveSyncSettings({
+        ...syncSettings,
+        lastSynced: now,
+      });
+
+      return { contestants: mergedContestants, logs: mergedLogs };
+    } catch (e) {
+      console.error("Auto Sync (Pull-Merge-Push) Flow Failed:", e);
+      // Fail gracefully: at least save the local action to the device's storage
+      saveContestantsLocally(localContestantsSnapshot);
+      saveLogsLocally(localLogsSnapshot);
+      throw e;
+    }
+  };
+
   // 2. Data Action Handlers (CRUD)
-  const handleAddContestant = (newC: Contestant) => {
+  const handleAddContestant = async (newC: Contestant) => {
     const newList = [...contestants, newC];
     saveContestantsLocally(newList);
-    triggerAutoSyncIfEnabled(newList, logs);
+    try {
+      await pullMergePushSync(newList, logs);
+    } catch (e) {
+      console.warn("Background upload failed, saved locally", e);
+    }
   };
 
-  const handleUpdateContestant = (updatedC: Contestant) => {
+  const handleUpdateContestant = async (updatedC: Contestant) => {
     const newList = contestants.map(c => (c.id === updatedC.id ? updatedC : c));
     saveContestantsLocally(newList);
-    triggerAutoSyncIfEnabled(newList, logs);
+    try {
+      await pullMergePushSync(newList, logs);
+    } catch (e) {
+      console.warn("Background upload failed, saved locally", e);
+    }
   };
 
-  const handleDeleteContestant = (id: string) => {
+  const handleDeleteContestant = async (id: string) => {
     const newContestants = contestants.filter(c => c.id !== id);
     const newLogs = logs.filter(l => l.contestantId !== id);
     saveContestantsLocally(newContestants);
     saveLogsLocally(newLogs);
-    triggerAutoSyncIfEnabled(newContestants, newLogs);
+    try {
+      await pullMergePushSync(newContestants, newLogs);
+    } catch (e) {
+      console.warn("Background upload failed, saved locally", e);
+    }
   };
 
-  const handleAddLog = (newLogFields: Omit<WeightLog, "id" | "createdAt">) => {
+  const handleAddLog = async (newLogFields: Omit<WeightLog, "id" | "createdAt">) => {
     const newLog: WeightLog = {
       ...newLogFields,
       id: "log_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
@@ -145,19 +256,28 @@ export default function App() {
     };
     const newList = [...logs, newLog];
     saveLogsLocally(newList);
-    triggerAutoSyncIfEnabled(contestants, newList);
+    // Explicitly returning promise so the caller can wait/display correct success feedback
+    await pullMergePushSync(contestants, newList);
   };
 
-  const handleUpdateLog = (updatedLog: WeightLog) => {
+  const handleUpdateLog = async (updatedLog: WeightLog) => {
     const newList = logs.map(l => (l.id === updatedLog.id ? updatedLog : l));
     saveLogsLocally(newList);
-    triggerAutoSyncIfEnabled(contestants, newList);
+    try {
+      await pullMergePushSync(contestants, newList);
+    } catch (e) {
+      console.warn("Background upload failed, saved locally", e);
+    }
   };
 
-  const handleDeleteLog = (id: string) => {
+  const handleDeleteLog = async (id: string) => {
     const newList = logs.filter(l => l.id !== id);
     saveLogsLocally(newList);
-    triggerAutoSyncIfEnabled(contestants, newList);
+    try {
+      await pullMergePushSync(contestants, newList);
+    } catch (e) {
+      console.warn("Background upload failed, saved locally", e);
+    }
   };
 
   const handleSaveSyncSettings = (settings: SyncSettings) => {
@@ -173,78 +293,11 @@ export default function App() {
     setSyncFeedback(null);
 
     try {
-      // Step A: Fetch remote data from Google Sheet Web App
-      const getUrl = `${syncSettings.sheetsUrl}?t=${Date.now()}`; // Bypass cache
-      const response = await fetch(getUrl, { method: "GET", mode: "cors" });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP 錯誤：${response.status}`);
-      }
-
-      const remoteData = await response.json();
-      
-      if (remoteData.error) {
-        throw new Error(remoteData.error);
-      }
-
-      // Step B: Multi-Device Smart Two-Way Union Merge
-      const remoteContestants: Contestant[] = remoteData.contestants || [];
-      const remoteLogs: WeightLog[] = remoteData.logs || [];
-
-      // Merge Contestants: Prefer local edits for matching IDs, append new remote options
-      const mergedContestantsMap = new Map<string, Contestant>();
-      // 1. Fill with remote
-      remoteContestants.forEach(c => mergedContestantsMap.set(c.id, c));
-      // 2. Overwrite/add with local (acts as newer local authority)
-      contestants.forEach(c => mergedContestantsMap.set(c.id, c));
-      const unionedContestants = Array.from(mergedContestantsMap.values());
-
-      // Merge Logs: Logs are atomic entries. Union unique log IDs
-      const mergedLogsMap = new Map<string, WeightLog>();
-      remoteLogs.forEach(l => mergedLogsMap.set(l.id, l));
-      logs.forEach(l => mergedLogsMap.set(l.id, l));
-      const unionedLogs = Array.from(mergedLogsMap.values());
-
-      // Date order logs
-      unionedLogs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime() ||
-                                 new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-
-      // Step C: Save merged state locally
-      saveContestantsLocally(unionedContestants);
-      saveLogsLocally(unionedLogs);
-
-      // Step D: Write merged unified state back to Google Sheets
-      const postResponse = await fetch(syncSettings.sheetsUrl, {
-        method: "POST",
-        mode: "cors",
-        headers: { "Content-Type": "text/plain" }, // Avoid preflight OPTIONS trigger
-        body: JSON.stringify({
-          action: "save",
-          contestants: unionedContestants,
-          logs: unionedLogs,
-        }),
-      });
-
-      if (!postResponse.ok) {
-        throw new Error(`回傳寫入失敗，狀態碼: ${postResponse.status}`);
-      }
-
-      const postResult = await postResponse.json();
-      if (postResult.error) {
-        throw new Error(postResult.error);
-      }
-
-      // Success: Save synchronization settings
+      await pullMergePushSync(contestants, logs);
       const now = new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei" });
-      const updatedSyncSettings = {
-        ...syncSettings,
-        lastSynced: now,
-      };
-      handleSaveSyncSettings(updatedSyncSettings);
-      
       setSyncFeedback({ type: "success", text: `🎉 雙向雲端同步成功！${now}` });
     } catch (error: any) {
-      console.error("Google Sheets sync failed:", error);
+      console.error("Google Sheets manual sync failed:", error);
       setSyncFeedback({
         type: "error",
         text: `❌ 同步失敗。請檢查您的 Web App URL 權限設置或網路狀態。錯誤：${error.message}`,
@@ -253,32 +306,6 @@ export default function App() {
       setIsSyncing(false);
       // Auto dismiss feedback after 5s
       setTimeout(() => setSyncFeedback(null), 5000);
-    }
-  };
-
-  // Optional background auto-upload after a local modification happens
-  const triggerAutoSyncIfEnabled = async (latestCt: Contestant[], latestLg: WeightLog[]) => {
-    if (!syncSettings.sheetsUrl) return;
-    
-    try {
-      await fetch(syncSettings.sheetsUrl, {
-        method: "POST",
-        mode: "cors",
-        headers: { "Content-Type": "text/plain" },
-        body: JSON.stringify({
-          action: "save",
-          contestants: latestCt,
-          logs: latestLg,
-        }),
-      });
-      
-      const now = new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei" });
-      handleSaveSyncSettings({
-        ...syncSettings,
-        lastSynced: now + " (自動背景)",
-      });
-    } catch (e) {
-      console.error("Auto sync failed:", e);
     }
   };
 
