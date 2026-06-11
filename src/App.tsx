@@ -55,6 +55,56 @@ export default function App() {
     }
   }, []);
 
+  // 1.5 Startup Background Auto Sync Check
+  const [hasAutoSynced, setHasAutoSynced] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (syncSettings.sheetsUrl && !hasAutoSynced) {
+      setHasAutoSynced(true);
+      const performInitialSync = async () => {
+        try {
+          const getUrl = `${syncSettings.sheetsUrl}?t=${Date.now()}`;
+          const response = await fetch(getUrl, { method: "GET", mode: "cors" });
+          if (response.ok) {
+            const remoteData = await response.json();
+            if (remoteData && !remoteData.error) {
+              const remoteContestants: Contestant[] = remoteData.contestants || [];
+              const remoteLogs: WeightLog[] = remoteData.logs || [];
+              
+              setContestants(currentLocalContestants => {
+                const mergedContestantsMap = new Map<string, Contestant>();
+                remoteContestants.forEach(c => mergedContestantsMap.set(c.id, c));
+                currentLocalContestants.forEach(c => mergedContestantsMap.set(c.id, c));
+                const unionedC = Array.from(mergedContestantsMap.values());
+                localStorage.setItem("weight_loss_contestants", JSON.stringify(unionedC));
+                return unionedC;
+              });
+
+              setLogs(currentLocalLogs => {
+                const mergedLogsMap = new Map<string, WeightLog>();
+                remoteLogs.forEach(l => mergedLogsMap.set(l.id, l));
+                currentLocalLogs.forEach(l => mergedLogsMap.set(l.id, l));
+                const unionedL = Array.from(mergedLogsMap.values());
+                unionedL.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime() ||
+                                         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+                localStorage.setItem("weight_loss_logs", JSON.stringify(unionedL));
+                return unionedL;
+              });
+              
+              console.log("🚀 啟動時自動背景同步 Google 試算表資料完成！");
+            }
+          }
+        } catch (err) {
+          console.error("Startup auto pull failed:", err);
+        }
+      };
+      
+      // Delay slightly to let local mount complete smoothly
+      const timer = setTimeout(performInitialSync, 800);
+      return () => clearTimeout(timer);
+    }
+  }, [syncSettings.sheetsUrl, hasAutoSynced]);
+
   // Helpers to persist state locally
   const saveContestantsLocally = (newList: Contestant[]) => {
     localStorage.setItem("weight_loss_contestants", JSON.stringify(newList));
