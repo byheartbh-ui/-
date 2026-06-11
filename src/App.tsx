@@ -43,31 +43,61 @@ export default function App() {
 
       // 載入全域預設之 Google 試算表連結
       const defaultSheetsUrl = (import.meta as any).env?.VITE_SHEETS_URL || GLOBAL_DEFAULT_SHEETS_URL || "";
+      const isSheetsMode = !!defaultSheetsUrl;
 
-      if (storedContestants) {
-        setContestants(JSON.parse(storedContestants));
+      let initialContestants: Contestant[] = [];
+      let initialLogs: WeightLog[] = [];
+
+      if (isSheetsMode) {
+        // 如果已啟用試算表同步：極力避免加載任何本地 Mock 電腦雜訊
+        if (storedContestants) {
+          const parsed = JSON.parse(storedContestants);
+          initialContestants = parsed.filter((c: Contestant) => !["c1", "c2", "c3", "c4", "c5", "c6"].includes(c.id));
+        } else {
+          initialContestants = [];
+        }
+
+        if (storedLogs) {
+          const parsed = JSON.parse(storedLogs);
+          initialLogs = parsed.filter((l: WeightLog) => 
+            !["c1", "c2", "c3", "c4", "c5", "c6"].includes(l.contestantId) && 
+            !l.id.startsWith("l1_") && !l.id.startsWith("l2_") && !l.id.startsWith("l3_") && 
+            !l.id.startsWith("l4_") && !l.id.startsWith("l5_") && !l.id.startsWith("l6_")
+          );
+        } else {
+          initialLogs = [];
+        }
+
+        localStorage.setItem("weight_loss_contestants", JSON.stringify(initialContestants));
+        localStorage.setItem("weight_loss_logs", JSON.stringify(initialLogs));
       } else {
-        localStorage.setItem("weight_loss_contestants", JSON.stringify(MOCK_CONTESTANTS));
-        setContestants(MOCK_CONTESTANTS);
+        // 本地離線沙盒模式：帶入初始示範資料
+        if (storedContestants) {
+          initialContestants = JSON.parse(storedContestants);
+        } else {
+          initialContestants = MOCK_CONTESTANTS;
+          localStorage.setItem("weight_loss_contestants", JSON.stringify(MOCK_CONTESTANTS));
+        }
+
+        if (storedLogs) {
+          initialLogs = JSON.parse(storedLogs);
+        } else {
+          initialLogs = MOCK_LOGS;
+          localStorage.setItem("weight_loss_logs", JSON.stringify(MOCK_LOGS));
+        }
       }
 
-      if (storedLogs) {
-        setLogs(JSON.parse(storedLogs));
-      } else {
-        localStorage.setItem("weight_loss_logs", JSON.stringify(MOCK_LOGS));
-        setLogs(MOCK_LOGS);
-      }
+      setContestants(initialContestants);
+      setLogs(initialLogs);
 
       if (storedSync) {
         const parsedSync = JSON.parse(storedSync);
-        // 如果本地設定與您代碼中設定的預設網址不同，則強制升級更新，確保手機也能即時讀到您綁定的試算表
         if (parsedSync.sheetsUrl !== defaultSheetsUrl && defaultSheetsUrl) {
           parsedSync.sheetsUrl = defaultSheetsUrl;
           localStorage.setItem("weight_loss_sync", JSON.stringify(parsedSync));
         }
         setSyncSettings(parsedSync);
       } else {
-        // 全新裝置/瀏覽器無本地紀錄：自動套用預設同步網址
         const initialSync: SyncSettings = {
           sheetsUrl: defaultSheetsUrl,
           lastSynced: null,
@@ -89,6 +119,7 @@ export default function App() {
     if (syncSettings.sheetsUrl && !hasAutoSynced) {
       setHasAutoSynced(true);
       const performInitialSync = async () => {
+        setIsSyncing(true);
         try {
           const getUrl = `${syncSettings.sheetsUrl}?t=${Date.now()}`;
           const response = await fetch(getUrl, { method: "GET", mode: "cors" });
@@ -98,31 +129,34 @@ export default function App() {
               const remoteContestants: Contestant[] = remoteData.contestants || [];
               const remoteLogs: WeightLog[] = remoteData.logs || [];
               
-              // 當與試算表同步時，雲端試算表為「單一真理來源」(Single Source of Truth)。
-              // 若雲端有參賽資料，應完全覆蓋本地狀態以防被舊有的 mock 初始設定汙染，造成手機和電腦顯示不一致。
-              if (remoteContestants && remoteContestants.length > 0) {
-                setContestants(remoteContestants);
-                localStorage.setItem("weight_loss_contestants", JSON.stringify(remoteContestants));
+              // 強力清洗排除任何示範噪點（包含歷史殘存在試算表端的）
+              const cleanContestants = remoteContestants.filter(c => !["c1", "c2", "c3", "c4", "c5", "c6"].includes(c.id));
+              const cleanLogs = remoteLogs.filter(l => 
+                !["c1", "c2", "c3", "c4", "c5", "c6"].includes(l.contestantId) && 
+                !l.id.startsWith("l1_") && !l.id.startsWith("l2_") && !l.id.startsWith("l3_") && 
+                !l.id.startsWith("l4_") && !l.id.startsWith("l5_") && !l.id.startsWith("l6_")
+              );
 
-                // 排序並覆寫 Weight Logs
-                const sortedLogs = [...remoteLogs];
-                sortedLogs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime() ||
-                                         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-                setLogs(sortedLogs);
-                localStorage.setItem("weight_loss_logs", JSON.stringify(sortedLogs));
-                
-                console.log("🚀 啟動時自動載入 Google 試算表最新資料完成（覆蓋本地 mock 雜訊）！");
-              } else {
-                console.log("⚠️ 雲端試算表尚未初始化或為空，維持本地沙盒設定。");
-              }
+              setContestants(cleanContestants);
+              localStorage.setItem("weight_loss_contestants", JSON.stringify(cleanContestants));
+
+              const sortedLogs = [...cleanLogs];
+              sortedLogs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime() ||
+                                       new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+              setLogs(sortedLogs);
+              localStorage.setItem("weight_loss_logs", JSON.stringify(sortedLogs));
+              
+              console.log("🚀 啟動時已完全覆蓋本地，拉取雲端試算表最新最乾淨的真實數據！");
             }
           }
         } catch (err) {
           console.error("Startup auto pull failed:", err);
+        } finally {
+          setIsSyncing(false);
         }
       };
 
-      const timer = setTimeout(performInitialSync, 800);
+      const timer = setTimeout(performInitialSync, 500);
       return () => clearTimeout(timer);
     }
   }, [syncSettings.sheetsUrl, hasAutoSynced]);
@@ -156,8 +190,16 @@ export default function App() {
       const getUrl = `${syncSettings.sheetsUrl}?t=${Date.now()}`;
       const response = await fetch(getUrl, { method: "GET", mode: "cors" });
       
-      let mergedContestants = [...localContestantsSnapshot];
-      let mergedLogs = [...localLogsSnapshot];
+      // 當前最新本地操作（排除任何示範噪點）
+      const cleanLocalContestants = localContestantsSnapshot.filter(c => !["c1", "c2", "c3", "c4", "c5", "c6"].includes(c.id));
+      const cleanLocalLogs = localLogsSnapshot.filter(l => 
+        !["c1", "c2", "c3", "c4", "c5", "c6"].includes(l.contestantId) && 
+        !l.id.startsWith("l1_") && !l.id.startsWith("l2_") && !l.id.startsWith("l3_") && 
+        !l.id.startsWith("l4_") && !l.id.startsWith("l5_") && !l.id.startsWith("l6_")
+      );
+
+      let mergedContestants = [...cleanLocalContestants];
+      let mergedLogs = [...cleanLocalLogs];
 
       if (response.ok) {
         const remoteData = await response.json();
@@ -165,18 +207,26 @@ export default function App() {
           const remoteContestants: Contestant[] = remoteData.contestants || [];
           const remoteLogs: WeightLog[] = remoteData.logs || [];
 
+          // 清洗雲端讀過來的舊有殘留示範資料
+          const cleanRemoteContestants = remoteContestants.filter(c => !["c1", "c2", "c3", "c4", "c5", "c6"].includes(c.id));
+          const cleanRemoteLogs = remoteLogs.filter(l => 
+            !["c1", "c2", "c3", "c4", "c5", "c6"].includes(l.contestantId) && 
+            !l.id.startsWith("l1_") && !l.id.startsWith("l2_") && !l.id.startsWith("l3_") && 
+            !l.id.startsWith("l4_") && !l.id.startsWith("l5_") && !l.id.startsWith("l6_")
+          );
+
           // Merge Contestants (Union based on ID):
           const contestantsMap = new Map<string, Contestant>();
-          // 1. Fill with newest remote
-          remoteContestants.forEach(c => contestantsMap.set(c.id, c));
-          // 2. Overwrite/add with newly modified local contestant
-          localContestantsSnapshot.forEach(c => contestantsMap.set(c.id, c));
+          // 1. 先用雲端
+          cleanRemoteContestants.forEach(c => contestantsMap.set(c.id, c));
+          // 2. 本地最新有編輯權重覆寫
+          cleanLocalContestants.forEach(c => contestantsMap.set(c.id, c));
           mergedContestants = Array.from(contestantsMap.values());
 
           // Merge Logs (Union based on unique ID):
           const logsMap = new Map<string, WeightLog>();
-          remoteLogs.forEach(l => logsMap.set(l.id, l));
-          localLogsSnapshot.forEach(l => logsMap.set(l.id, l));
+          cleanRemoteLogs.forEach(l => logsMap.set(l.id, l));
+          cleanLocalLogs.forEach(l => logsMap.set(l.id, l));
           mergedLogs = Array.from(logsMap.values());
           mergedLogs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime() ||
                                    new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
@@ -187,7 +237,7 @@ export default function App() {
       saveContestantsLocally(mergedContestants);
       saveLogsLocally(mergedLogs);
 
-      // Step C: Push the merged complete state back to Google Sheets Web App
+      // Step C: Push the merged clean state back to Google Sheets Web App (主動幫忙把雲端的噪點一起刷掉)
       await fetch(syncSettings.sheetsUrl, {
         method: "POST",
         mode: "cors",
@@ -209,7 +259,6 @@ export default function App() {
       return { contestants: mergedContestants, logs: mergedLogs };
     } catch (e) {
       console.error("Auto Sync (Pull-Merge-Push) Flow Failed:", e);
-      // Fail gracefully: at least save the local action to the device's storage
       saveContestantsLocally(localContestantsSnapshot);
       saveLogsLocally(localLogsSnapshot);
       throw e;
