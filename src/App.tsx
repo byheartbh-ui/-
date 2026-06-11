@@ -18,7 +18,7 @@ import { motion, AnimatePresence } from "motion/react";
 // 2. 或者，如果你是用 Netlify，也可以直接在 Netlify 的環境變數 (Environment Variables) 
 //    中設定一組 VITE_SHEETS_URL = 你的網址。如此一來不需修改程式碼，每個人打開也會直接連到同一個試算表！
 // =========================================================================
-const GLOBAL_DEFAULT_SHEETS_URL = ""; 
+const GLOBAL_DEFAULT_SHEETS_URL = "https://script.google.com/macros/s/AKfycbxC9KTrmlc4pBYslBIomW8kKUIiKos0TXFMKkhpAf4A7tZipkMWOssg14KLgF08oiF56Q/exec"; 
 
 export default function App() {
   const [activeTab, setActiveTab ] = useState<"leaderboard" | "checkin" | "admin">("leaderboard");
@@ -60,9 +60,10 @@ export default function App() {
 
       if (storedSync) {
         const parsedSync = JSON.parse(storedSync);
-        // 如果本地設定儲存了空白網址，但程式碼裡有設定預設網址，則自動補上
-        if (!parsedSync.sheetsUrl && defaultSheetsUrl) {
+        // 如果本地設定與您代碼中設定的預設網址不同，則強制升級更新，確保手機也能即時讀到您綁定的試算表
+        if (parsedSync.sheetsUrl !== defaultSheetsUrl && defaultSheetsUrl) {
           parsedSync.sheetsUrl = defaultSheetsUrl;
+          localStorage.setItem("weight_loss_sync", JSON.stringify(parsedSync));
         }
         setSyncSettings(parsedSync);
       } else {
