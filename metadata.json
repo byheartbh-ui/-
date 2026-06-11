@@ -1,0 +1,6 @@
+{
+  "name": "2026體脂肪討伐任務",
+  "description": "暑期聯合實驗：研究生體態對口試委員滿意度之顯著性影響。一個兼具動物森友會可愛風格與幽默研究生梗的減肥排行榜系統，支援個人獨立登入填報查看歷史紀錄、管理員集中管理隱私、以及 Google 試算表同步。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
