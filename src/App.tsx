@@ -117,7 +117,6 @@ export default function App() {
 
   useEffect(() => {
     if (syncSettings.sheetsUrl && !hasAutoSynced) {
-      setHasAutoSynced(true);
       const performInitialSync = async () => {
         setIsSyncing(true);
         try {
@@ -146,6 +145,15 @@ export default function App() {
               setLogs(sortedLogs);
               localStorage.setItem("weight_loss_logs", JSON.stringify(sortedLogs));
               
+              const now = new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei" });
+              const updatedSync = {
+                ...syncSettings,
+                lastSynced: now,
+              };
+              setSyncSettings(updatedSync);
+              localStorage.setItem("weight_loss_sync", JSON.stringify(updatedSync));
+              
+              setHasAutoSynced(true);
               console.log("🚀 啟動時已完全覆蓋本地，拉取雲端試算表最新最乾淨的真實數據！");
             }
           }
@@ -159,7 +167,7 @@ export default function App() {
       const timer = setTimeout(performInitialSync, 500);
       return () => clearTimeout(timer);
     }
-  }, [syncSettings.sheetsUrl, hasAutoSynced]);
+  }, [syncSettings.sheetsUrl, hasAutoSynced, syncSettings]);
 
   // Helpers to persist state locally
   const saveContestantsLocally = (newList: Contestant[]) => {
@@ -455,7 +463,13 @@ export default function App() {
               exit={{ opacity: 0, y: -15 }}
               transition={{ duration: 0.25 }}
             >
-              <Leaderboard contestants={contestants} logs={logs} />
+              <Leaderboard 
+                contestants={contestants} 
+                logs={logs} 
+                syncSettings={syncSettings}
+                isSyncing={isSyncing}
+                onSyncWithSheets={handleSyncWithSheets}
+              />
             </motion.div>
           )}
 

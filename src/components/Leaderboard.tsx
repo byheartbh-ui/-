@@ -4,10 +4,10 @@
  */
 
 import React, { useMemo, useState } from "react";
-import { Contestant, WeightLog, LeaderboardRow, PRESET_AVATARS } from "../types";
+import { Contestant, WeightLog, LeaderboardRow, PRESET_AVATARS, SyncSettings } from "../types";
 import { 
   Trophy, ArrowUp, ArrowDown, Minus, Info, Flame, Target, Dumbbell,
-  Shield, ShieldCheck, Unlock, Lock, Eye, EyeOff 
+  Shield, ShieldCheck, Unlock, Lock, Eye, EyeOff, RefreshCw, Leaf
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -21,9 +21,19 @@ interface LeaderboardProps {
   contestants: Contestant[];
   logs: WeightLog[];
   isAdminMode?: boolean;
+  syncSettings?: SyncSettings;
+  isSyncing?: boolean;
+  onSyncWithSheets?: () => Promise<void>;
 }
 
-export default function Leaderboard({ contestants, logs, isAdminMode = false }: LeaderboardProps) {
+export default function Leaderboard({ 
+  contestants, 
+  logs, 
+  isAdminMode = false,
+  syncSettings,
+  isSyncing = false,
+  onSyncWithSheets
+}: LeaderboardProps) {
   // Privacy is strictly enabled to protect raw metrics from unauthorized public disclosure
   const isPrivacyActive = true;
   const leaderboardData = useMemo(() => {
@@ -201,8 +211,114 @@ export default function Leaderboard({ contestants, logs, isAdminMode = false }: 
     }
   };
 
+  if (contestants.length === 0) {
+    return (
+      <div className="space-y-6" id="empty-leaderboard">
+        {/* 雲端同步連結提示與手動同步按鈕 */}
+        {syncSettings?.sheetsUrl && (
+          <div className="bg-[#fcfaf2] border-3 border-[#ebdcb9] rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <div className="w-2.5 h-2.5 bg-amber-500 rounded-full animate-pulse shrink-0"></div>
+              <div className="text-left font-sans">
+                <p className="text-xs font-black text-[#5d4037] flex items-center gap-1.5 flex-wrap">
+                  <span>🌲 2026體脂肪討伐任務雲端連線</span>
+                  <span className="text-[9px] bg-amber-100 text-amber-800 font-extrabold px-1.5 py-0.5 rounded border border-amber-200">
+                    等待連線讀取數據
+                  </span>
+                </p>
+                <p className="text-[10px] text-[#a37e72] font-semibold">
+                  {syncSettings.lastSynced ? `上次雲端更新時間：${syncSettings.lastSynced}` : "尚未載入雲端真實數據"}
+                </p>
+              </div>
+            </div>
+            
+            <button
+              onClick={onSyncWithSheets}
+              disabled={isSyncing}
+              className={`px-4 py-2 text-[11px] font-extrabold rounded-xl text-white shadow-sm flex items-center gap-1.5 transition-all duration-150 cursor-pointer ${
+                isSyncing
+                  ? "bg-slate-400 cursor-not-allowed opacity-80"
+                  : "bg-[#74be62] hover:bg-[#5aa148] border-b-4 border-[#5aa148] hover:border-[#448033] active:translate-y-0.5"
+              }`}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+              <span>{isSyncing ? "正在重新拉取最新數據..." : "🔄 重新嘗試載入資料"}</span>
+            </button>
+          </div>
+        )}
+
+        <div className="bg-white rounded-3xl p-10 sm:p-12 text-center border-3 border-[#ebdcb9] shadow-inner space-y-5 flex flex-col items-center justify-center">
+          {isSyncing ? (
+            <>
+              <div className="relative w-16 h-16 flex items-center justify-center">
+                <RefreshCw className="w-12 h-12 text-[#74be62] animate-spin" />
+                <span className="absolute text-lg">🌱</span>
+              </div>
+              <h3 className="text-base sm:text-lg font-black text-[#5c3e35]">🌿 正在與雲端試算表同步中...</h3>
+              <p className="text-xs text-[#a37e72] max-w-md leading-relaxed font-semibold">
+                系統當前正在從 Google Apps Script 獲取您綁定的最新實例數據。由於跨國雲端伺服器請求延遲，首次載入大約需要 2 ~ 3 秒鐘，請稍等一下下喔！
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="text-4xl sm:text-5xl mb-1 animate-bounce">🍂</div>
+              <h3 className="text-base sm:text-lg font-black text-[#5c3e35]">目前尚未註冊任何活動參賽選手！</h3>
+              <p className="text-xs text-[#a37e72] max-w-md leading-relaxed font-semibold block">
+                您的雲端資料庫已成功綁定，但目前試算表內是全空、無人參賽狀態喔。<br/>
+                <span className="font-extrabold text-indigo-600 block mt-3">🛠️ 主辦人該怎麼做：</span>
+                請點按上方網頁導覽列上的 <b className="text-[#8f6a48] underline">【維護後台 ⚙️】</b>（管理者帳號：<code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono text-slate-800">chiaba</code>，系統密碼：<code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono text-slate-800">5376</code>），進入後切換到<b>「參賽選手管理」</b>即可自訂添加選手名字、設定體重與 4 碼個人申報密碼。
+              </p>
+              <div className="flex flex-wrap gap-2.5 pt-4 justify-center">
+                <button
+                  onClick={onSyncWithSheets}
+                  className="px-5 py-2.5 bg-[#74be62] hover:bg-[#5aa148] border-b-4 border-[#5aa148] text-white font-extrabold text-xs rounded-xl flex items-center gap-1.5 transition active:translate-y-0.5 shadow-sm cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>重試讀取雲端</span>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8" id="live-leaderboard">
+      {/* 雲端同步快捷操作列 */}
+      {syncSettings?.sheetsUrl && (
+        <div className="bg-[#fcfaf2] border-3 border-[#ebdcb9] rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <div className="w-2.5 h-2.5 bg-[#74be62] rounded-full animate-pulse shrink-0"></div>
+            <div className="text-left font-sans">
+              <p className="text-xs font-black text-[#5d4037] flex items-center gap-1.5">
+                <span>🌲 已綁定 Google 雲端試算表</span>
+                <span className="text-[9px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.5 rounded border border-emerald-200">
+                  即時自動同步中
+                </span>
+              </p>
+              <p className="text-[10px] text-[#a37e72] font-semibold">
+                {syncSettings.lastSynced ? `上次雲端同步更新時間：${syncSettings.lastSynced}` : "尚未進行首次同步"}
+              </p>
+            </div>
+          </div>
+          
+          <button
+            onClick={onSyncWithSheets}
+            disabled={isSyncing}
+            className={`px-4 py-2 text-[11px] font-extrabold rounded-xl text-white shadow-sm flex items-center gap-1.5 transition-all duration-150 cursor-pointer ${
+              isSyncing
+                ? "bg-slate-400 cursor-not-allowed opacity-80"
+                : "bg-[#74be62] hover:bg-[#5aa148] border-b-4 border-[#5aa148] hover:border-[#448033] active:translate-y-0.5"
+            }`}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+            <span>{isSyncing ? "正在整理最新排行..." : "🔄 點我手動重新載入最新排行"}</span>
+          </button>
+        </div>
+      )}
+
       {/* Overview Intro Banner */}
       <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-4 sm:p-5 border border-blue-100/50 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1 my-auto">
