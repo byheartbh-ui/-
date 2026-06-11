@@ -486,6 +486,7 @@ export default function App() {
                 logs={logs} 
                 onAddLog={handleAddLog} 
                 onUpdateContestant={handleUpdateContestant}
+                onAddContestant={handleAddContestant}
               />
             </motion.div>
           )}

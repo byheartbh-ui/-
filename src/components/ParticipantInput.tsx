@@ -14,15 +14,27 @@ interface ParticipantInputProps {
   logs: WeightLog[];
   onAddLog: (newLog: Omit<WeightLog, "id" | "createdAt">) => any;
   onUpdateContestant: (updatedC: Contestant) => any;
+  onAddContestant: (newC: Contestant) => Promise<any>;
 }
 
-export default function ParticipantInput({ contestants, logs, onAddLog, onUpdateContestant }: ParticipantInputProps) {
+export default function ParticipantInput({ contestants, logs, onAddLog, onUpdateContestant, onAddContestant }: ParticipantInputProps) {
   const [selectedId, setSelectedId] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string>("");
   const [showAvatarSelector, setShowAvatarSelector] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // Registration States
+  const [isRegistering, setIsRegistering] = useState<boolean>(false);
+  const [regName, setRegName] = useState<string>("");
+  const [regPassword, setRegPassword] = useState<string>("");
+  const [regWeight, setRegWeight] = useState<string>("");
+  const [regBodyFat, setRegBodyFat] = useState<string>("");
+  const [regMuscle, setRegMuscle] = useState<string>("");
+  const [regAvatar, setRegAvatar] = useState<string>("fat_piggy");
+  const [regError, setRegError] = useState<string>("");
+  const [isRegisteringSubmit, setIsRegisteringSubmit] = useState<boolean>(false);
 
   // Form Fields
   const [weight, setWeight] = useState<string>("");
@@ -42,6 +54,98 @@ export default function ParticipantInput({ contestants, logs, onAddLog, onUpdate
   const activeContestant = useMemo(() => {
     return contestants.find(c => c.id === selectedId) || null;
   }, [contestants, selectedId]);
+
+  // Handle Registration Submit
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegError("");
+
+    const trimmedName = regName.trim();
+    if (!trimmedName) {
+      setRegError("請填寫島民姓名");
+      return;
+    }
+
+    // Check duplicate
+    const dupe = contestants.some(c => c.name.toLowerCase() === trimmedName.toLowerCase());
+    if (dupe) {
+      setRegError(`姓名「${trimmedName}」已經有人登記囉，請換一個名字或加個小後綴以免混淆`);
+      return;
+    }
+
+    if (regPassword.length !== 4 || !/^\d{4}$/.test(regPassword)) {
+      setRegError("補給安全暗號必須是剛好 4 位數純數字");
+      return;
+    }
+
+    const rw = parseFloat(regWeight);
+    const rf = parseFloat(regBodyFat);
+    const rm = parseFloat(regMuscle);
+
+    if (isNaN(rw) || rw <= 10 || rw > 300) {
+      setRegError("請輸入有效的起始體重 (預設 10-300 kg)");
+      return;
+    }
+    if (isNaN(rf) || rf <= 0 || rf > 100) {
+      setRegError("請輸入有效的起始體脂率 (預設 1-100 %)");
+      return;
+    }
+    if (isNaN(rm) || rm <= 0 || rm > 100) {
+      setRegError("請輸入有效的起始肌肉率 (預設 1-100 %)");
+      return;
+    }
+
+    try {
+      setIsRegisteringSubmit(true);
+      const newId = "c_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+      const newC: Contestant = {
+        id: newId,
+        name: trimmedName,
+        password: regPassword,
+        initialWeight: rw,
+        initialBodyFat: rf,
+        initialMuscle: rm,
+        avatar: regAvatar
+      };
+
+      // Register contestant
+      await onAddContestant(newC);
+
+      // Save initial baseline log as well so chart starts properly
+      await onAddLog({
+        contestantId: newId,
+        date: date, // uses standard current date
+        weight: rw,
+        bodyFat: rf,
+        muscle: rm
+      });
+
+      // Clear register inputs
+      setRegName("");
+      setRegPassword("");
+      setRegWeight("");
+      setRegBodyFat("");
+      setRegMuscle("");
+      setRegAvatar("fat_piggy");
+
+      // Auto login!
+      setSelectedId(newId);
+      setPassword(regPassword);
+      setIsAuthenticated(true);
+      setIsRegistering(false);
+
+      setSubmitMessage({
+        type: "success",
+        text: `🎉 島民「${trimmedName}」註冊成功，已自動登入數據大廳！初始基礎值也已同步至雲端。`
+      });
+
+    } catch (err: any) {
+      console.error(err);
+      setRegError("新增失敗，請連線管理者檢查雲端試算表連結是否順暢。");
+    } finally {
+      setIsRegisteringSubmit(false);
+    }
+  };
 
   // Handle Authentication Click
   const handleVerify = (e: React.FormEvent) => {
@@ -196,87 +300,265 @@ export default function ParticipantInput({ contestants, logs, onAddLog, onUpdate
     <div className="max-w-4xl mx-auto" id="participant-portal">
       <AnimatePresence mode="wait">
         {!isAuthenticated ? (
-          /* Authentication Card */
-          <motion.div
-            key="auth"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.3 }}
-            className="ac-card p-8 max-w-md mx-auto relative overflow-hidden bg-[#fcfaf2] text-[#5d4037]"
-          >
-            <div className="absolute top-0 left-0 right-0 h-2 bg-[#74be62]"></div>
-            
-            <div className="flex flex-col items-center text-center space-y-2 mb-6">
-              <div className="w-14 h-14 bg-[#eaf5e6] rounded-2xl flex items-center justify-center text-[#74be62] border-2 border-[#ebdcb9] mb-2 shadow-sm">
-                <Lock className="w-6 h-6 stroke-[2.5]" />
-              </div>
-              <h2 className="text-xl font-black text-[#5c3e35] flex items-center gap-1.5">
-                島民數據同步裝置 🍃
-              </h2>
-              <p className="text-xs text-[#a37e72] font-semibold leading-relaxed">
-                「狸克：誠實申報今日體組成，口試委員對論文的滿意度才會顯著提升哦！」輸入你的 4 位數逃學密碼，解鎖今日登入。
-              </p>
-            </div>
+          isRegistering ? (
+            /* Registration Card */
+            <motion.div
+              key="register"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.3 }}
+              className="ac-card p-6 sm:p-8 max-w-xl mx-auto relative overflow-hidden bg-[#fcfaf2] text-[#5d4037]"
+            >
+              <div className="absolute top-0 left-0 right-0 h-2 bg-amber-500"></div>
 
-            <form onSubmit={handleVerify} className="space-y-5">
-              {/* Select contestant */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-extrabold text-[#5c3e35]">島民（研究生）姓名</label>
-                <select
-                  value={selectedId}
-                  onChange={(e) => {
-                    setSelectedId(e.target.value);
-                    setAuthError("");
-                  }}
-                  className="w-full px-4 py-3 bg-[#e3d7ba]/30 border-2 border-[#ebdcb9] rounded-xl text-[#5d4037] font-bold focus:ring-2 focus:ring-[#74be62] focus:bg-[#fcfaf2] outline-none transition"
-                >
-                  <option value="">-- 請選擇您的姓名 --</option>
-                  {contestants.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
+              <div className="flex flex-col items-center text-center space-y-2 mb-6">
+                <div className="w-14 h-14 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500 border-2 border-[#ebdcb9] mb-2 shadow-sm">
+                  <Sparkles className="w-6 h-6 stroke-[2.5]" />
+                </div>
+                <h2 className="text-lg sm:text-xl font-black text-[#5c3e35] flex items-center gap-1.5">
+                  🌴 註冊新島民選手
+                </h2>
+                <p className="text-xs text-[#a37e72] font-semibold leading-relaxed">
+                  大聲公：「歡迎新人加入體脂討伐！請設定專屬姓名、四位密碼及初次體組成。系統會自動在雲端為您創建初始對照序列！」
+                </p>
               </div>
 
-              {/* Password field */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-extrabold text-[#5c3e35]">4 位數安全研究暗號</label>
-                <div className="relative">
-                  <input
-                    type="password"
-                    maxLength={4}
-                    placeholder="請輸入 4 位數密碼"
-                    value={password}
-                    onChange={(e) => {
-                      setPassword(e.target.value.replace(/\D/g, ""));
-                      setAuthError("");
-                    }}
-                    className="w-full pl-4 pr-10 py-3 bg-[#e3d7ba]/30 border-2 border-[#ebdcb9] rounded-xl text-[#5d4037] tracking-widest text-center text-lg font-black focus:ring-2 focus:ring-[#74be62] focus:bg-[#fcfaf2] outline-none transition"
-                  />
-                  <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#ebdcb9] text-lg">
-                    🔒
+              <form onSubmit={handleRegister} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Name */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-extrabold text-[#5c3e35]">島民（選手）姓名</label>
+                    <input
+                      type="text"
+                      maxLength={10}
+                      placeholder="例如: 小華"
+                      value={regName}
+                      onChange={(e) => setRegName(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-[#e3d7ba]/30 border-2 border-[#ebdcb9] rounded-xl text-[#5d4037] font-bold focus:ring-2 focus:ring-amber-500 focus:bg-[#fcfaf2] outline-none transition text-sm"
+                      required
+                    />
+                  </div>
+
+                  {/* Password */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-extrabold text-[#5c3e35]">4 位數安全防護暗號 (密碼)</label>
+                    <input
+                      type="password"
+                      maxLength={4}
+                      placeholder="設定 4 位數數字密碼"
+                      value={regPassword}
+                      onChange={(e) => setRegPassword(e.target.value.replace(/\D/g, ""))}
+                      className="w-full px-4 py-2.5 bg-[#e3d7ba]/30 border-2 border-[#ebdcb9] rounded-xl text-[#5d4037] tracking-wider font-bold focus:ring-2 focus:ring-amber-500 focus:bg-[#fcfaf2] outline-none transition text-sm"
+                      required
+                    />
                   </div>
                 </div>
+
+                {/* Metrics */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-extrabold text-[#5c3e35] block truncate">起始體重 (kg)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="初始 kg"
+                      value={regWeight}
+                      onChange={(e) => setRegWeight(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-[#e3d7ba]/30 border-2 border-[#ebdcb9] rounded-xl text-[#5d4037] font-semibold text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-extrabold text-[#5c3e35] block truncate">起始體脂 (%)</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="初始 %"
+                      value={regBodyFat}
+                      onChange={(e) => setRegBodyFat(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-[#e3d7ba]/30 border-2 border-[#ebdcb9] rounded-xl text-[#5d4037] font-semibold text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-extrabold text-[#5c3e35] block truncate">起始肌肉 (%)</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="初始 %"
+                      value={regMuscle}
+                      onChange={(e) => setRegMuscle(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-[#e3d7ba]/30 border-2 border-[#ebdcb9] rounded-xl text-[#5d4037] font-semibold text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* Avatar Selection */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-extrabold text-[#5c3e35] block">🌴 選擇您的代表動物頭像角色：</label>
+                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 max-h-36 overflow-y-auto p-2 bg-white/50 rounded-xl border border-[#ebdcb9]">
+                    {PRESET_AVATARS.map((av) => {
+                      const isSelected = regAvatar === av.id;
+                      return (
+                        <button
+                          type="button"
+                          key={av.id}
+                          onClick={() => setRegAvatar(av.id)}
+                          style={{ backgroundColor: isSelected ? av.color : undefined }}
+                          className={`p-1.5 rounded-lg flex flex-col items-center justify-center transition cursor-pointer border text-[10px] min-h-[44px] ${
+                            isSelected
+                              ? "border-amber-500 scale-102 font-bold ring-2 ring-amber-500/30"
+                              : "bg-white hover:bg-[#ebdcb9]/40 border-slate-200"
+                          }`}
+                        >
+                          <span className="text-xl mb-0.5 select-none">{av.emoji}</span>
+                          <span className="text-[9px] font-extrabold truncate w-full text-center text-[#8a685d]">
+                            {av.name}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Reg Error */}
+                {regError && (
+                  <div className="p-3 bg-[#feece7] border-2 border-[#f89b5c] text-[#863725] text-xs rounded-xl flex items-center gap-2 font-bold animate-pulse">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{regError}</span>
+                  </div>
+                )}
+
+                {/* Submit / back */}
+                <div className="flex gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsRegistering(false);
+                      setRegError("");
+                    }}
+                    className="flex-1 py-3 bg-[#ebdcb9] hover:bg-[#e3d7ba] border-b-4 border-[#cbdcb9] text-[#5d4037] font-black rounded-xl text-xs transition cursor-pointer text-center"
+                    disabled={isRegisteringSubmit}
+                  >
+                    返回登入 🏠
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={isRegisteringSubmit}
+                    className={`flex-[2] py-3 text-white font-black rounded-xl shadow-lg transition duration-200 flex items-center justify-center gap-2 cursor-pointer ${
+                      isRegisteringSubmit 
+                        ? "bg-slate-400 cursor-not-allowed"
+                        : "bg-amber-500 hover:bg-amber-600 border-b-4 border-amber-600 active:translate-y-0.5"
+                    }`}
+                  >
+                    {isRegisteringSubmit ? "正在寫入雲端中..." : "完成註冊 🚀"}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          ) : (
+            /* Authentication Card */
+            <motion.div
+              key="auth"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.3 }}
+              className="ac-card p-8 max-w-md mx-auto relative overflow-hidden bg-[#fcfaf2] text-[#5d4037]"
+            >
+              <div className="absolute top-0 left-0 right-0 h-2 bg-[#74be62]"></div>
+              
+              <div className="flex flex-col items-center text-center space-y-2 mb-6">
+                <div className="w-14 h-14 bg-[#eaf5e6] rounded-2xl flex items-center justify-center text-[#74be62] border-2 border-[#ebdcb9] mb-2 shadow-sm">
+                  <Lock className="w-6 h-6 stroke-[2.5]" />
+                </div>
+                <h2 className="text-xl font-black text-[#5c3e35] flex items-center gap-1.5">
+                  島民數據同步裝置 🍃
+                </h2>
+                <p className="text-xs text-[#a37e72] font-semibold leading-relaxed">
+                  「狸克：誠實申報今日體組成，口試委員對論文的滿意度才會顯著提升哦！」輸入你的 4 位數逃學密碼，解鎖今日登入。
+                </p>
               </div>
 
-              {/* Error messages */}
-              {authError && (
-                <div className="p-3 bg-[#feece7] border-2 border-[#f89b5c] text-[#863725] text-xs rounded-xl flex items-center gap-2 font-bold">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{authError}</span>
+              <form onSubmit={handleVerify} className="space-y-5">
+                {/* Select contestant */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-extrabold text-[#5c3e35]">島民（研究生）姓名</label>
+                  <select
+                    value={selectedId}
+                    onChange={(e) => {
+                      setSelectedId(e.target.value);
+                      setAuthError("");
+                    }}
+                    className="w-full px-4 py-3 bg-[#e3d7ba]/30 border-2 border-[#ebdcb9] rounded-xl text-[#5d4037] font-bold focus:ring-2 focus:ring-[#74be62] focus:bg-[#fcfaf2] outline-none transition uppercase"
+                  >
+                    <option value="">-- 請選擇您的姓名 --</option>
+                    {contestants.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
                 </div>
-              )}
 
-              {/* Login submit */}
-              <button
-                type="submit"
-                className="w-full py-3.5 ac-button-green text-white font-black rounded-xl shadow-lg transition duration-200 flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <UserCheck className="w-5 h-5" />
-                進入體脂審判研究室！ ☕
-              </button>
-            </form>
-          </motion.div>
+                {/* Password field */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-extrabold text-[#5c3e35]">4 位數安全研究暗號</label>
+                  <div className="relative">
+                    <input
+                      type="password"
+                      maxLength={4}
+                      placeholder="請輸入 4 位數密碼"
+                      value={password}
+                      onChange={(e) => {
+                        setPassword(e.target.value.replace(/\D/g, ""));
+                        setAuthError("");
+                      }}
+                      className="w-full pl-4 pr-10 py-3 bg-[#e3d7ba]/30 border-2 border-[#ebdcb9] rounded-xl text-[#5d4037] tracking-widest text-center text-lg font-black focus:ring-2 focus:ring-[#74be62] focus:bg-[#fcfaf2] outline-none transition"
+                    />
+                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#ebdcb9] text-lg">
+                      🔒
+                    </div>
+                  </div>
+                </div>
+
+                {/* Error messages */}
+                {authError && (
+                  <div className="p-3 bg-[#feece7] border-2 border-[#f89b5c] text-[#863725] text-xs rounded-xl flex items-center gap-2 font-bold">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{authError}</span>
+                  </div>
+                )}
+
+                {/* Login submit */}
+                <button
+                  type="submit"
+                  className="w-full py-3.5 ac-button-green text-white font-black rounded-xl shadow-lg transition duration-200 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <UserCheck className="w-5 h-5" />
+                  進入體脂審判研究室！ ☕
+                </button>
+              </form>
+
+              {/* Quick register trigger */}
+              <div className="mt-5 pt-4 border-t-2 border-dashed border-[#ebdcb9] text-center">
+                <p className="text-[11px] text-[#a37e72] font-semibold mb-2">
+                  沒有我的姓名在清單中？直接註冊加入實驗！
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsRegistering(true);
+                    setAuthError("");
+                  }}
+                  className="px-4 py-2.5 bg-[#ebdcb9] hover:bg-[#e3d7ba] text-[#5d4037] text-xs font-black rounded-xl transition cursor-pointer flex items-center gap-1.5 mx-auto"
+                >
+                  <span>🆕 新增參賽成員 / 快速註冊</span>
+                </button>
+              </div>
+            </motion.div>
+          )
         ) : (
           /* Participant Form and Personal Progress Page */
           <motion.div
